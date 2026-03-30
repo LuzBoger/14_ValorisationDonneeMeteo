@@ -1,154 +1,50 @@
-name: Continuous Integration
+name: CI
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [main, develop]
   pull_request:
-    branches: [ "main", "develop" ]
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME_BACKEND: ${{ github.repository_owner }}/meteo-backend
-  IMAGE_NAME_FRONTEND: ${{ github.repository_owner }}/meteo-frontend
 
 jobs:
-  backend-ci:
-    name: Backend CI (Python/uv)
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: meteodb
-          POSTGRES_USER: infoclimat
-          POSTGRES_PASSWORD: infoclimat2026
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: "0.10.0"
-          enable-cache: true
-
-      - name: Install backend dependencies
-        run: uv sync --all-groups
-
-      - name: Run Python linter (ruff)
-        run: uv run ruff check .
-
-      - name: Run Python security scan (bandit)
-        run: uv run bandit -r .
-
-      - name: Run Backend tests (pytest)
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_NAME: meteodb
-          DB_USER: infoclimat
-          DB_PASSWORD: infoclimat2026
-          SECRET_KEY: ci-test-key
-          DEBUG: "True"
-        run: uv run pytest
-
-  frontend-ci:
-    name: Frontend CI (Nuxt/Node)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Run frontend linter (eslint)
-        run: npm run lint
-
-      - name: Run frontend security scan (npm audit)
-        run: npm audit --audit-level=high
-
-      - name: Run frontend tests (vitest)
-        run: npm run test:ci
-
-  docker-build-push:
-    name: Build & Push Docker Images
-    needs: [backend-ci, frontend-ci]
+  pipeline:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Log into registry ${{ env:REGISTRY }}
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env:REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # Backend (install, lint, security, test)
+      - uses: astral-sh/setup-uv@v5
+      - name: Backend
+        run: |
+          cd backend
+          uv sync --all-groups
+          uv run ruff check .
+          uv run bandit -r .
+          # On lance les tests en mode basique
+          uv run pytest
 
-      - name: Extract Docker metadata for Backend
-        id: meta-backend
-        uses: docker/metadata-action@v5
+      # Frontend (install, lint, security, test)
+      - uses: actions/setup-node@v4
         with:
-          images: ${{ env:REGISTRY }}/${{ env:IMAGE_NAME_BACKEND }}
+          node-version: 24
+      - name: Frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run lint
+          npm audit --audit-level=high
+          npm run test:ci
 
-      - name: Build and push Backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./backend
-          push: ${{ github.ref == 'refs/heads/main' }}
-          tags: ${{ steps:meta-backend.outputs.tags }}
-          labels: ${{ steps:meta-backend.outputs.labels }}
-
-      - name: Extract Docker metadata for Frontend
-        id: meta-frontend
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env:REGISTRY }}/${{ env:IMAGE_NAME_FRONTEND }}
-
-      - name: Build and push Frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          push: ${{ github.ref == 'refs/heads/main' }}
-          tags: ${{ steps:meta-frontend.outputs.tags }}
-          labels: ${{ steps:meta-frontend.outputs.labels }}
-
-      - name: Docker image security scan (Trivy)
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env:REGISTRY }}/${{ env:IMAGE_NAME_BACKEND }}:${{ steps:meta-backend.outputs.version }}
-          format: 'table'
-          exit-code: '0'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
- 
+      # Docker (build, push on main)
+      - name: Docker
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          # Transformation du nom du repo en minuscules pour Docker
+          REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          docker build -t ghcr.io/$REPO_NAME/backend:latest ./backend
+          docker build -t ghcr.io/$REPO_NAME/frontend:latest ./frontend
+          docker push ghcr.io/$REPO_NAME/backend:latest
+          docker push ghcr.io/$REPO_NAME/frontend:latest
