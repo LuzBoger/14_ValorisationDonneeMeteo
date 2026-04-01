@@ -11,10 +11,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write # Requis pour l'upload SARIF
     steps:
       - uses: actions/checkout@v4
 
-      # Backend
+      # Backend (install, lint, security, test)
       - uses: astral-sh/setup-uv@v5
       - name: Backend Lint
         run: |
@@ -34,7 +35,7 @@ jobs:
           cd backend
           uv run pytest --junitxml=pytest-report.xml
 
-      # Frontend
+      # Frontend (install, lint, security, test)
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -63,6 +64,27 @@ jobs:
           cd frontend
           npx vitest run --no-file-parallelism --reporter=junit --outputFile=vitest-report.xml
 
+      # Trivy Scan (Repo & Security Reports)
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          vex: 'trivy-vex.json' # Utilise le fichier VEX créé à la racine
+
+      - name: Run Trivy (JSON report for artifacts)
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'json'
+          output: 'trivy-results.json'
+          vex: 'trivy-vex.json'
+
       # Artefacts
       - name: Upload Test & Security Reports
         uses: actions/upload-artifact@v4
@@ -74,6 +96,16 @@ jobs:
             backend/pytest-report.xml
             frontend/vitest-report.xml
             frontend/npm-audit-report.json
+            trivy-results.sarif
+            trivy-results.json
+            trivy-vex.json
+
+      # Upload SARIF to GitHub Security tab
+      - name: Upload Trivy SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
 
       - name: Docker
         if: github.ref == 'refs/heads/main'

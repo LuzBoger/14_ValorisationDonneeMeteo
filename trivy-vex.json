@@ -1,0 +1,23 @@
+{
+  "bom-ref": "pkg:maven/14_ValorisationDonneeMeteo",
+  "vex": [
+    {
+      "vulnerability": {
+        "id": "CVE-2023-45853"
+      },
+      "analysis": {
+        "state": "not_affected",
+        "detail": "La vulnérabilité zlib impacte des fonctions de compression non utilisées par notre stack Django/Gunicorn."
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2024-21503"
+      },
+      "analysis": {
+        "state": "not_affected",
+        "detail": "Concerne SQLite3 présent dans l'image de base, mais nous utilisons uniquement PostgreSQL pour le stockage des données."
+      }
+    }
+  ]
+}
