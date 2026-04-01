@@ -20,22 +20,42 @@ jobs:
         run: |
           cd backend
           uv sync --all-extras
-          uv run ruff check .
+          # Format natif GitHub pour ruff (affiche les erreurs dans la PR)
+          uv run ruff check . --output-format=github
+          # On génère le fichier json sans faire planter le script
+          uvx bandit -r . -f json -o bandit-report.json || true
+          # On relance pour faire échouer le pipeline si vulnérabilités
           uvx bandit -r .
-          # On lance les tests en mode basique
-          uv run pytest
+          # On lance les tests et on exporte un fichier XML type JUnit
+          uv run pytest --junitxml=pytest-report.xml
 
       # Frontend (install, lint, security, test)
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - name: Frontend
+        if: always() # Le frontend tourne meme si le backend echoue (utile pour avoir tous les rapports)
         run: |
           cd frontend
           npm ci
           npm run lint
+          # On génère le json sans planter 
+          npm audit --audit-level=high --json > npm-audit-report.json || true
+          # On le relance pour fail si vulnérabilité
           npm audit --audit-level=high
-          npm run test:ci
+          npx vitest run --no-file-parallelism --reporter=junit --outputFile=vitest-report.xml
+
+      # Artefacts (Telechargeables dans l'UI Github sous forme de ZIP ou lues par des extensions Github)
+      - name: Upload Test & Security Reports
+        uses: actions/upload-artifact@v4
+        if: always() # Toujours uploader pour voir ce qui a fail
+        with:
+          name: ci-reports
+          path: |
+            backend/bandit-report.json
+            backend/pytest-report.xml
+            frontend/vitest-report.xml
+            frontend/npm-audit-report.json
 
       # Docker (build, push on main)
       - name: Docker
