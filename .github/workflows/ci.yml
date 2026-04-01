@@ -14,41 +14,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Backend (install, lint, security, test)
+      # Backend
       - uses: astral-sh/setup-uv@v5
-      - name: Backend
+      - name: Backend Lint
         run: |
           cd backend
           uv sync --all-extras
-          # Format natif GitHub pour ruff (affiche les erreurs dans la PR)
           uv run ruff check . --output-format=github
-          # On génère le fichier json sans faire planter le script
-          uvx bandit -r . -f json -o bandit-report.json || true
-          # On relance pour faire échouer le pipeline si vulnérabilités
-          uvx bandit -r .
-          # On lance les tests et on exporte un fichier XML type JUnit
+
+      - name: Backend Security
+        if: always()
+        run: |
+          cd backend
+          uvx bandit -r . -f json -o bandit-report.json
+
+      - name: Backend Tests
+        if: always()
+        run: |
+          cd backend
           uv run pytest --junitxml=pytest-report.xml
 
-      # Frontend (install, lint, security, test)
+      # Frontend
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Frontend
-        if: always() # Le frontend tourne meme si le backend echoue (utile pour avoir tous les rapports)
+      - name: Frontend Dependencies
+        if: always()
         run: |
           cd frontend
           npm ci
+
+      - name: Frontend Lint
+        if: always()
+        run: |
+          cd frontend
           npm run lint
-          # On génère le json sans planter 
+
+      - name: Frontend Security
+        if: always()
+        run: |
+          cd frontend
           npm audit --audit-level=high --json > npm-audit-report.json || true
-          # On le relance pour fail si vulnérabilité
           npm audit --audit-level=high
+
+      - name: Frontend Tests
+        if: always()
+        run: |
+          cd frontend
           npx vitest run --no-file-parallelism --reporter=junit --outputFile=vitest-report.xml
 
-      # Artefacts (Telechargeables dans l'UI Github sous forme de ZIP ou lues par des extensions Github)
+      # Artefacts
       - name: Upload Test & Security Reports
         uses: actions/upload-artifact@v4
-        if: always() # Toujours uploader pour voir ce qui a fail
+        if: always()
         with:
           name: ci-reports
           path: |
@@ -57,12 +75,10 @@ jobs:
             frontend/vitest-report.xml
             frontend/npm-audit-report.json
 
-      # Docker (build, push on main)
       - name: Docker
         if: github.ref == 'refs/heads/main'
         run: |
           echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          # Transformation du nom du repo en minuscules pour Docker
           REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           docker build -t ghcr.io/$REPO_NAME/backend:latest ./backend
           docker build -t ghcr.io/$REPO_NAME/frontend:latest ./frontend
