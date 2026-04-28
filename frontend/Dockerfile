@@ -1,23 +1,26 @@
-FROM node:24-alpine AS build
+FROM dhi.io/node:24-dev AS build
 
 WORKDIR /app
 
-COPY package*.json .
-
+COPY package*.json ./
 RUN npm install
 
 COPY . .
-
 RUN npm run build
 
-FROM node:24-alpine AS prod
+FROM dhi.io/node:24 AS prod
 
 WORKDIR /app
 
-COPY --from=build /app/.output /app/.output
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3000
 
-ENV NODE_ENV=production
+COPY --from=build --chown=1000:1000 /app/.output /app/.output
+
+USER 1000
 
 EXPOSE 3000
 
-CMD [ "node", ".output/server/index.mjs" ]
+ENTRYPOINT ["node"]
+CMD [".output/server/index.mjs" ]
